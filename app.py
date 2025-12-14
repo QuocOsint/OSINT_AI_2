@@ -11,10 +11,15 @@ import uuid
 from pathlib import Path
 import hashlib
 import time
+import numpy as np
+import cv2
+
+from PIL import Image, ImageChops, ImageEnhance
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(title="Gemini File Search POC")
 
@@ -93,6 +98,9 @@ USERS = {
     "admin": "123456",
     "test": "test123",
 }
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 
 @app.get("/", response_class=HTMLResponse)
 async def login_page(request: Request):
@@ -254,3 +262,53 @@ async def ask_question(
     )
 
     return {"answer": response.text}
+
+# ---------------------------
+# FORENSICS ENDPOINT
+# ---------------------------
+@app.post("/forensics")
+async def forensic_analysis(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith((".jpg", ".jpeg", ".png")):
+        raise HTTPException(400, "Only JPG/PNG allowed")
+
+    img_input = UPLOAD_DIR / "forensic_input.jpg"
+    with open(img_input, "wb") as f:
+        f.write(await file.read())
+
+    orig = Image.open(img_input).convert("RGB")
+
+    temp_jpeg = UPLOAD_DIR / "forensic_recompressed.jpg"
+    img_ela = UPLOAD_DIR / "forensic_ela.png"
+
+    orig.save(temp_jpeg, "JPEG", quality=90)
+    recompressed = Image.open(temp_jpeg).convert("RGB")
+    ela = ImageChops.difference(orig, recompressed)
+    ela_enhanced = ImageEnhance.Brightness(ela).enhance(15)
+    ela_enhanced.save(img_ela)
+
+    img_np = cv2.imread(str(img_input)) 
+    gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
+
+    kernel = np.array([[0, -1,  0],
+                       [-1, 4, -1],
+                       [0, -1,  0]])
+
+    noise = cv2.filter2D(gray, -1, kernel)
+    noise_norm = cv2.normalize(noise, None, 0, 255, cv2.NORM_MINMAX)
+    img_noise = UPLOAD_DIR / "forensic_noise.png"
+    cv2.imwrite(str(img_noise), noise_norm)
+
+    f = np.fft.fft2(gray)
+    fshift = np.fft.fftshift(f)
+    spectrum = 20 * np.log(np.abs(fshift) + 1)
+
+    img_fft = UPLOAD_DIR / "forensic_fft.png"
+    cv2.imwrite(str(img_fft), spectrum)
+
+    return {
+        "message": "Forensic analysis complete",
+        "original": "/uploads/forensic_input.jpg",
+        "ela": "/uploads/forensic_ela.png",
+        "noise": "/uploads/forensic_noise.png",
+        "fft": "/uploads/forensic_fft.png"
+    }

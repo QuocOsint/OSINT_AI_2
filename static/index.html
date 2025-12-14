@@ -1,178 +1,260 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8"/>
+    <meta charset="UTF-8" />
     <title>Gemini File Search POC</title>
     <style>
-    body {
-        font-family: Arial, sans-serif;
-        margin: 40px;
-        background: #f5f5f5;
-    }
-    .section-card {
-        background: #ffffff;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-        margin-bottom: 24px;
-        max-width: 700px;
-    }
-    button {
-        padding: 8px 16px;
-        border-radius: 6px;
-        border: none;
-        cursor: pointer;
-        background: #2563eb;
-        color: white;
-        font-weight: 600;
-    }
-    textarea {
-        width: 100%;
-        box-sizing: border-box;
-        border-radius: 8px;
-        border: 1px solid #ccc;
-        padding: 8px;
-        font-family: inherit;
-    }
-    #answer {
-        margin-top: 8px;
-        padding: 12px;
-        background: #0f172a;
-        color: #e5e7eb;
-        border-radius: 8px;
-        min-height: 60px;
-        white-space: pre-wrap;
-        font-family: Consolas, monospace;
-    }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background: #f5f5f5;
+        }
+
+        .section-card {
+            background: #ffffff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+            margin-bottom: 24px;
+            max-width: 700px;
+        }
+
+        button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            background: #2563eb;
+            color: white;
+            font-weight: 600;
+        }
+
+        textarea {
+            width: 100%;
+            box-sizing: border-box;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            padding: 8px;
+            font-family: inherit;
+        }
+
+        #answer {
+            margin-top: 8px;
+            padding: 12px;
+            background: #0f172a;
+            color: #e5e7eb;
+            border-radius: 8px;
+            min-height: 60px;
+            white-space: pre-wrap;
+            font-family: Consolas, monospace;
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+        }
+
+        .grid-4 div img {
+            width: 100%;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
     </style>
 </head>
 
 <body>
 
-<h1>File Search POC</h1>
+    <h1>File Search POC</h1>
 
-<!-- UPLOAD SECTION -->
-<div class="section-card" id="upload-section">
-    <h2>Upload Files into Gemini File Search</h2>
+    <!-- UPLOAD SECTION -->
+    <div class="section-card" id="upload-section">
+        <h2>Upload Files into Gemini File Search</h2>
 
-    <input type="file" id="fileInput" multiple>
-    <button id="uploadBtn" onclick="uploadFile()">Upload</button>
+        <input type="file" id="fileInput" multiple>
+        <button id="uploadBtn" onclick="uploadFile()">Upload</button>
 
-    <p id="uploadStatus"></p>
-    <ul id="uploadedList"></ul>
-</div>
+        <p id="uploadStatus"></p>
+        <ul id="uploadedList"></ul>
+    </div>
 
-<!-- ASK SECTION -->
-<div class="section-card" id="ask-section">
-    <h2>Ask Questions</h2>
+    <!-- ASK SECTION -->
+    <div class="section-card" id="ask-section">
+        <h2>Ask Questions</h2>
 
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <input type="checkbox" id="useDocument" checked />
-        <span>Use File Search (use uploaded documents)</span>
-    </label>
-    
-    <textarea id="question" rows="4"
-        placeholder="Example: Summarize the uploaded document..."></textarea>
-    <br><br>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <input type="checkbox" id="useDocument" checked />
+            <span>Use File Search (use uploaded documents)</span>
+        </label>
 
-    <button id="askBtn" onclick="ask()">Ask</button>
+        <textarea id="question" rows="4" placeholder="Example: Summarize the uploaded document..."></textarea>
+        <br><br>
 
-    <h3>Answer:</h3>
-    <div id="answer"></div>
-</div>
+        <button id="askBtn" onclick="ask()">Ask</button>
+
+        <h3>Answer:</h3>
+        <div id="answer"></div>
+    </div>
+
+    <!-- ELA SECTION -->
+    <div class="section-card" id="ela-section">
+        <h2>Image Forensics</h2>
+
+        <form id="forensicForm" enctype="multipart/form-data">
+            <input type="file" id="imageFile" name="file">
+            <button type="button" onclick="runForensics()">Analyze Image</button>
+        </form>
+
+        <div class="grid-4">
+            <div>
+                <h3>Original Image</h3>
+                <div id="originalPreview"></div>
+            </div>
+
+            <div>
+                <h3>ELA Result</h3>
+                <div id="elaResult"></div>
+            </div>
+
+            <div>
+                <h3>Noise Map</h3>
+                <div id="noiseResult"></div>
+            </div>
+
+            <div>
+                <h3>FFT Spectrum</h3>
+                <div id="fftResult"></div>
+            </div>
+        </div>
+
+        <style>
+
+        </style>
+
+    </div>
 
 
-<script>
-async function uploadFile(){
-    const fileInput = document.getElementById("fileInput");
-    const uploadStatus = document.getElementById("uploadStatus");
-    const list = document.getElementById("uploadedList");
+    <script>
+        async function runForensics() {
+            const input = document.getElementById("imageFile").files[0];
+            const formData = new FormData();
+            formData.append("file", input);
 
-    if (!fileInput.files.length) {
-        alert("Please select files first!");
-        return;
-    }
+            const res = await fetch("/forensics", {
+                method: "POST",
+                body: formData
+            });
 
-    const formData = new FormData();
-    for (let f of fileInput.files) {
-        formData.append("files", f);
-    }
+            const data = await res.json();
 
-    uploadStatus.innerHTML = `
+            document.getElementById("originalPreview").innerHTML =
+                `<img src="${data.original}?t=${Date.now()}">`;
+
+            document.getElementById("elaResult").innerHTML =
+                `<img src="${data.ela}?t=${Date.now()}">`;
+
+            document.getElementById("noiseResult").innerHTML =
+                `<img src="${data.noise}?t=${Date.now()}">`;
+
+            document.getElementById("fftResult").innerHTML =
+                `<img src="${data.fft}?t=${Date.now()}">`;
+        }
+    </script>
+
+
+    <script>
+        async function uploadFile() {
+            const fileInput = document.getElementById("fileInput");
+            const uploadStatus = document.getElementById("uploadStatus");
+            const list = document.getElementById("uploadedList");
+
+            if (!fileInput.files.length) {
+                alert("Please select files first!");
+                return;
+            }
+
+            const formData = new FormData();
+            for (let f of fileInput.files) {
+                formData.append("files", f);
+            }
+
+            uploadStatus.innerHTML = `
     <img src="/static/loading.gif" alt="loading"
          style="width:120px;display:block;margin:20px auto;">
     <p style="text-align:center;color:#777;">Uploading & indexing...</p>
 `;
 
-    try {
-        const res = await fetch("/upload", {
-            method: "POST",
-            body: formData
-        });
-        if (res.status === 401) {
-            alert("Session expired. Please login again.");
-            window.location.href = "/";
-            return;
-}
+            try {
+                const res = await fetch("/upload", {
+                    method: "POST",
+                    body: formData
+                });
+                if (res.status === 401) {
+                    alert("Session expired. Please login again.");
+                    window.location.href = "/";
+                    return;
+                }
 
-        const data = await res.json();
+                const data = await res.json();
 
-    uploadStatus.innerHTML = `<p style="color:green;">Upload completed.</p>`;
+                uploadStatus.innerHTML = `<p style="color:green;">Upload completed.</p>`;
 
-        list.innerHTML = "";
-        data.forEach(msg => {
-            const li = document.createElement("li");
-            li.innerText = msg;
-            list.appendChild(li);
-        });
+                list.innerHTML = "";
+                data.forEach(msg => {
+                    const li = document.createElement("li");
+                    li.innerText = msg;
+                    list.appendChild(li);
+                });
 
-    } catch (err) {
-        uploadStatus.innerText = "Error: " + err.message;
-    }
-}
-
-
-async function ask(){
-    const q = document.getElementById("question").value.trim();
-    const answerDiv = document.getElementById("answer");
-    const useDoc = document.getElementById("useDocument").checked;
-
-    if (!q) {
-        alert("Please enter a question.");
-        return;
-    }
-
-    const formData = new FormData();
-    formData.append("question", q);
-    formData.append("use_doc", useDoc ? "true" : "false");
-
-    answerDiv.innerText = "Thinking...";
-
-    try {
-        const res = await fetch("/ask", {
-            method: "POST",
-            body: formData
-        });
-
-        if (!res.ok) {
-            const text = await res.text();
-            throw new Error(text);
+            } catch (err) {
+                uploadStatus.innerText = "Error: " + err.message;
+            }
         }
 
-        if (res.status === 401) {
-            alert("Session expired. Please login again.");
-            window.location.href = "/";
-            return;
-}
 
-        const data = await res.json();
-        answerDiv.innerText = data.answer;
+        async function ask() {
+            const q = document.getElementById("question").value.trim();
+            const answerDiv = document.getElementById("answer");
+            const useDoc = document.getElementById("useDocument").checked;
 
-    } catch (err) {
-        answerDiv.innerText = "Error: " + err.message;
-    }
-}
-</script>
+            if (!q) {
+                alert("Please enter a question.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("question", q);
+            formData.append("use_doc", useDoc ? "true" : "false");
+
+            answerDiv.innerText = "Thinking...";
+
+            try {
+                const res = await fetch("/ask", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(text);
+                }
+
+                if (res.status === 401) {
+                    alert("Session expired. Please login again.");
+                    window.location.href = "/";
+                    return;
+                }
+
+                const data = await res.json();
+                answerDiv.innerText = data.answer;
+
+            } catch (err) {
+                answerDiv.innerText = "Error: " + err.message;
+            }
+        }
+    </script>
 
 </body>
+
 </html>
