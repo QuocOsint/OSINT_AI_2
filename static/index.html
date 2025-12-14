@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 <head>
     <meta charset="UTF-8" />
@@ -97,70 +98,193 @@
         <div id="answer"></div>
     </div>
 
+    <!-- Thêm thư viện để hiển thị Markdown (chữ in đậm, gạch đầu dòng) -->
+
     <!-- ELA SECTION -->
     <div class="section-card" id="ela-section">
-        <h2>Image Forensics</h2>
+        <h2>Image Forensics & AI Analysis</h2>
+        <p class="desc">Tải ảnh lên để tạo bản đồ ELA, Noise, FFT và nhờ AI giám định dấu hiệu chỉnh sửa.</p>
 
         <form id="forensicForm" enctype="multipart/form-data">
-            <input type="file" id="imageFile" name="file">
-            <button type="button" onclick="runForensics()">Analyze Image</button>
+            <input type="file" id="imageFile" name="file" accept="image/*">
+            <button type="button" id="btnAnalyze" onclick="runForensics()">Analyze Image</button>
         </form>
 
-        <div class="grid-4">
-            <div>
-                <h3>Original Image</h3>
-                <div id="originalPreview"></div>
-            </div>
-
-            <div>
-                <h3>ELA Result</h3>
-                <div id="elaResult"></div>
-            </div>
-
-            <div>
-                <h3>Noise Map</h3>
-                <div id="noiseResult"></div>
-            </div>
-
-            <div>
-                <h3>FFT Spectrum</h3>
-                <div id="fftResult"></div>
-            </div>
+        <!-- Hiệu ứng Loading -->
+        <div id="loading" style="display: none; text-align: center; margin: 20px 0;">
+            <div class="spinner"></div>
+            <p>Đang xử lý ảnh và gửi cho AI phân tích... Vui lòng đợi...</p>
         </div>
 
-        <style>
+        <!-- Kết quả -->
+        <div id="resultContainer" style="display: none;">
 
-        </style>
+            <!-- 1. Phần AI Phân tích -->
+            <div class="ai-box">
+                <h3>🤖 AI Expert Report</h3>
+                <div id="aiAnalysisContent" class="markdown-body"></div>
+            </div>
 
+            <!-- 2. Phần Hình ảnh Kỹ thuật -->
+            <div class="grid-4">
+                <div>
+                    <h3>Original Image</h3>
+                    <div class="img-wrapper">
+                        <img id="imgOrig" src="" alt="Original">
+                    </div>
+                </div>
+
+                <div>
+                    <h3>ELA (Error Level)</h3>
+                    <div class="img-wrapper">
+                        <img id="imgEla" src="" alt="ELA">
+                    </div>
+                </div>
+
+                <div>
+                    <h3>Noise Map</h3>
+                    <div class="img-wrapper">
+                        <img id="imgNoise" src="" alt="Noise">
+                    </div>
+                </div>
+
+                <div>
+                    <h3>FFT Spectrum</h3>
+                    <div class="img-wrapper">
+                        <img id="imgFft" src="" alt="FFT">
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
+    <style>
+        /* CSS cho Grid ảnh */
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            /* 2 cột */
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .img-wrapper {
+            border: 1px solid #ddd;
+            padding: 5px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            height: 250px;
+            /* Cố định chiều cao cho đều */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .img-wrapper img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        /* CSS cho hộp phân tích AI */
+        .ai-box {
+            background-color: #f0f7ff;
+            border-left: 5px solid #007bff;
+            padding: 20px;
+            margin-top: 20px;
+            border-radius: 4px;
+            margin-bottom: 25px;
+        }
+
+        .markdown-body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        /* CSS Spinner đơn giản */
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px auto;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
 
     <script>
         async function runForensics() {
-            const input = document.getElementById("imageFile").files[0];
+            const fileInput = document.getElementById("imageFile");
+
+            if (fileInput.files.length === 0) {
+                alert("Vui lòng chọn một ảnh!");
+                return;
+            }
+
             const formData = new FormData();
-            formData.append("file", input);
+            formData.append("file", fileInput.files[0]);
 
-            const res = await fetch("/forensics", {
-                method: "POST",
-                body: formData
-            });
+            // UI: Bật loading, tắt nút, ẩn kết quả cũ
+            document.getElementById("loading").style.display = "block";
+            document.getElementById("resultContainer").style.display = "none";
+            document.getElementById("btnAnalyze").disabled = true;
+            document.getElementById("btnAnalyze").innerText = "Analyzing...";
 
-            const data = await res.json();
+            try {
+                const res = await fetch("/forensics", {
+                    method: "POST",
+                    body: formData
+                });
 
-            document.getElementById("originalPreview").innerHTML =
-                `<img src="${data.original}?t=${Date.now()}">`;
+                if (!res.ok) {
+                    const err = await res.text(); // hoặc res.json() tuỳ server trả lỗi gì
+                    alert("Lỗi: " + err);
+                    return;
+                }
 
-            document.getElementById("elaResult").innerHTML =
-                `<img src="${data.ela}?t=${Date.now()}">`;
+                const data = await res.json();
+                // Backend trả về: { "analysis": "...", "images": { "original": "...", "ela": "...", ... } }
 
-            document.getElementById("noiseResult").innerHTML =
-                `<img src="${data.noise}?t=${Date.now()}">`;
+                // 1. Hiển thị Text phân tích (Dùng thư viện Marked để render Markdown)
+                document.getElementById("aiAnalysisContent").innerHTML = marked.parse(data.analysis);
 
-            document.getElementById("fftResult").innerHTML =
-                `<img src="${data.fft}?t=${Date.now()}">`;
+                // 2. Hiển thị Ảnh (Thêm timestamp để tránh trình duyệt cache ảnh cũ)
+                const ts = Date.now();
+                document.getElementById("imgOrig").src = `${data.images.original}?t=${ts}`;
+                document.getElementById("imgEla").src = `${data.images.ela}?t=${ts}`;
+                document.getElementById("imgNoise").src = `${data.images.noise}?t=${ts}`;
+                document.getElementById("imgFft").src = `${data.images.fft}?t=${ts}`;
+
+                // UI: Hiện kết quả
+                document.getElementById("resultContainer").style.display = "block";
+
+            } catch (error) {
+                console.error(error);
+                alert("Có lỗi xảy ra khi kết nối server.");
+            } finally {
+                // UI: Tắt loading, bật lại nút
+                document.getElementById("loading").style.display = "none";
+                document.getElementById("btnAnalyze").disabled = false;
+                document.getElementById("btnAnalyze").innerText = "Analyze Image";
+            }
         }
     </script>
+
+
+
 
 
     <script>

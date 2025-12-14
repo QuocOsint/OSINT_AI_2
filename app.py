@@ -266,49 +266,146 @@ async def ask_question(
 # ---------------------------
 # FORENSICS ENDPOINT
 # ---------------------------
+# ---------------------------
+# FORENSICS ENDPOINT (UPGRADED)
+# ---------------------------
 @app.post("/forensics")
 async def forensic_analysis(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith((".jpg", ".jpeg", ".png")):
-        raise HTTPException(400, "Only JPG/PNG allowed")
+    # 1. Validate Input
+    if not file.filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        raise HTTPException(400, "Only JPG/PNG/WEBP allowed")
 
-    img_input = UPLOAD_DIR / "forensic_input.jpg"
-    with open(img_input, "wb") as f:
-        f.write(await file.read())
+    # Tạo tên file unique để tránh trùng lặp khi nhiều user dùng
+    request_id = str(uuid.uuid4())
+    base_name = f"forensic_{request_id}"
+    
+    img_input_path = UPLOAD_DIR / f"{base_name}_orig.jpg"
+    
+    # Lưu file gốc
+    content = await file.read()
+    with open(img_input_path, "wb") as f:
+        f.write(content)
 
-    orig = Image.open(img_input).convert("RGB")
-
-    temp_jpeg = UPLOAD_DIR / "forensic_recompressed.jpg"
-    img_ela = UPLOAD_DIR / "forensic_ela.png"
-
+    # ---------------------------
+    # A. IMAGE PROCESSING (OpenCV/PIL)
+    # ---------------------------
+    
+    # Load ảnh
+    orig = Image.open(img_input_path).convert("RGB")
+    img_np = cv2.imread(str(img_input_path)) 
+    
+    # 1. ELA (Error Level Analysis)
+    # Nguyên lý: Lưu lại với chất lượng thấp, sau đó trừ đi ảnh gốc để xem sự khác biệt nén.
+    temp_jpeg = UPLOAD_DIR / f"{base_name}_temp.jpg"
+    img_ela_path = UPLOAD_DIR / f"{base_name}_ela.png"
+    
     orig.save(temp_jpeg, "JPEG", quality=90)
     recompressed = Image.open(temp_jpeg).convert("RGB")
     ela = ImageChops.difference(orig, recompressed)
-    ela_enhanced = ImageEnhance.Brightness(ela).enhance(15)
-    ela_enhanced.save(img_ela)
+    
+    # Tăng độ sáng ELA để dễ nhìn
+    extrema = ela.getextrema()
+    max_diff = max([ex[1] for ex in extrema])
+    if max_diff == 0:
+        max_diff = 1
+    scale = 255.0 / max_diff
+    ela_enhanced = ImageEnhance.Brightness(ela).enhance(scale)
+    ela_enhanced.save(img_ela_path)
 
-    img_np = cv2.imread(str(img_input)) 
+    # 2. Noise Analysis (High Pass Filter)
+    # Nguyên lý: Tách nhiễu hạt. Ảnh ghép thường có độ nhiễu không đồng nhất.
     gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
-
-    kernel = np.array([[0, -1,  0],
-                       [-1, 4, -1],
-                       [0, -1,  0]])
-
-    noise = cv2.filter2D(gray, -1, kernel)
+    # Dùng filter Laplace để làm nổi bật cạnh và nhiễu
+    noise_kernel = np.array([[0, -1,  0], [-1, 4, -1], [0, -1,  0]]) 
+    noise = cv2.filter2D(gray, -1, noise_kernel)
     noise_norm = cv2.normalize(noise, None, 0, 255, cv2.NORM_MINMAX)
-    img_noise = UPLOAD_DIR / "forensic_noise.png"
-    cv2.imwrite(str(img_noise), noise_norm)
+    img_noise_path = UPLOAD_DIR / f"{base_name}_noise.png"
+    cv2.imwrite(str(img_noise_path), noise_norm)
 
+    # 3. FFT (Fast Fourier Transform)
+    # Nguyên lý: Phát hiện các mẫu lặp lại (thường thấy ở AI Deepfake hoặc ảnh bị resize/rotate)
     f = np.fft.fft2(gray)
     fshift = np.fft.fftshift(f)
-    spectrum = 20 * np.log(np.abs(fshift) + 1)
+    # Lấy log spectrum để hiển thị
+    magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
+    
+    # Chuẩn hóa về 0-255 để lưu ảnh
+    magnitude_spectrum = cv2.normalize(magnitude_spectrum, None, 0, 255, cv2.NORM_MINMAX)
+    img_fft_path = UPLOAD_DIR / f"{base_name}_fft.png"
+    cv2.imwrite(str(img_fft_path), magnitude_spectrum)
 
-    img_fft = UPLOAD_DIR / "forensic_fft.png"
-    cv2.imwrite(str(img_fft), spectrum)
+    # Xóa file temp
+    if temp_jpeg.exists():
+        os.remove(temp_jpeg)
+
+    # ---------------------------
+    # B. AI ANALYSIS (GEMINI)
+    # ---------------------------
+
+    try:
+        # Upload các ảnh lên Google GenAI (File API)
+        # Lưu ý: Các file này chỉ tồn tại tạm thời trong project
+        
+        g_orig = client.files.upload(file=str(img_input_path), config=types.UploadFileConfig(display_name="Original Image"))
+        g_ela = client.files.upload(file=str(img_ela_path), config=types.UploadFileConfig(display_name="ELA Map"))
+        g_noise = client.files.upload(file=str(img_noise_path), config=types.UploadFileConfig(display_name="Noise Analysis"))
+        g_fft = client.files.upload(file=str(img_fft_path), config=types.UploadFileConfig(display_name="FFT Spectrum"))
+
+        # Đợi file active (thường ảnh nhỏ thì rất nhanh)
+        while g_orig.state.name == "PROCESSING":
+            time.sleep(1)
+            g_orig = client.files.get(name=g_orig.name)
+
+        # Prompt chuyên gia giám định
+        prompt = """
+        Bạn là một chuyên gia giám định hình ảnh kỹ thuật số (Digital Image Forensics Expert).
+        Tôi cung cấp cho bạn 4 bức ảnh theo thứ tự:
+        1. Ảnh gốc (Original Image).
+        2. ELA (Error Level Analysis): Giúp phát hiện các vùng bị chỉnh sửa (splicing, healing) có mức nén khác biệt.
+        3. Noise Analysis: Giúp phát hiện sự không đồng nhất về nhiễu hạt.
+        4. FFT Spectrum: Giúp phát hiện các dấu hiệu của AI sinh ra (AI Generation artifacts) hoặc dấu vết chỉnh sửa hình học.
+
+        NHIỆM VỤ CỦA BẠN:
+        Hãy phân tích các hình ảnh này và đưa ra báo cáo ngắn gọn, dễ hiểu cho người dùng phổ thông.
+        
+        Cấu trúc trả lời:
+        1. **Nhận định chung**: Ảnh này có khả năng cao là Thật (Authentic), Đã chỉnh sửa (Manipulated), hay do AI tạo ra (AI Generated)? Đưa ra tỉ lệ phần trăm tự tin.
+        2. **Phân tích chi tiết**:
+           - ELA: Có vùng nào sáng bất thường so với nền không? (Dấu hiệu ghép ảnh).
+           - Noise: Nhiễu có đồng nhất không?
+           - FFT: Có xuất hiện các ngôi sao (star patterns) hay lưới bất thường không? (Dấu hiệu AI/Deepfake).
+        3. **Kết luận**: Tóm tắt lại phát hiện.
+
+        Hãy trả lời bằng Tiếng Việt, giọng văn khách quan, chuyên nghiệp.
+        """
+
+        # Gọi Gemini
+        response = client.models.generate_content(
+            model="gemini-1.5-flash", # Dùng 1.5 Flash cho nhanh và tốt về Vision
+            contents=[
+                prompt,
+                g_orig,
+                g_ela,
+                g_noise,
+                g_fft
+            ]
+        )
+        
+        ai_analysis_text = response.text
+
+    except Exception as e:
+        ai_analysis_text = f"Không thể phân tích AI do lỗi: {str(e)}"
+
+    # ---------------------------
+    # C. RETURN RESPONSE
+    # ---------------------------
 
     return {
-        "message": "Forensic analysis complete",
-        "original": "/uploads/forensic_input.jpg",
-        "ela": "/uploads/forensic_ela.png",
-        "noise": "/uploads/forensic_noise.png",
-        "fft": "/uploads/forensic_fft.png"
+        "analysis": ai_analysis_text,
+        "images": {
+            "original": f"/uploads/{base_name}_orig.jpg",
+            "ela": f"/uploads/{base_name}_ela.png",
+            "noise": f"/uploads/{base_name}_noise.png",
+            "fft": f"/uploads/{base_name}_fft.png"
+        }
     }
